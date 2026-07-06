@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import { Partido, PartidoEstado } from '../partidos/entities/partido.entity';
+import { normalizePartidoPhase } from '../partidos/phase.utils';
 import { PronosticosService } from '../pronosticos/pronosticos.service';
 
 interface SportsDbEvent {
@@ -45,56 +46,87 @@ export class SincronizacionService implements OnModuleInit {
     const events = await this.fetchSeasonEvents();
     let created = 0;
     let updated = 0;
+    let savedCount = 0;
+    let resultsUpdated = 0;
+    let finalized = 0;
     for (const event of events) {
-      if (!event.idEvent || !event.strHomeTeam || !event.strAwayTeam) continue;
+      if (!event.idEvent) continue;
       const fechaHora = this.resolveEventDate(event);
       if (!fechaHora) continue;
+      const golesLocal = this.parseScore(event.intHomeScore);
+      const golesVisitante = this.parseScore(event.intAwayScore);
       const current = await this.partidosRepository.findOneBy({
         sportsDbEventId: event.idEvent,
       });
       const partido = current ?? this.partidosRepository.create();
       partido.sportsDbEventId = event.idEvent;
-      partido.equipoLocal = event.strHomeTeam;
-      partido.equipoVisitante = event.strAwayTeam;
-      partido.fase = event.strRound || event.intRound || 'Mundial 2026';
+      partido.equipoLocal = event.strHomeTeam || 'Por definir';
+      partido.equipoVisitante = event.strAwayTeam || 'Por definir';
+      partido.fase = this.mapPhase(event.strRound, event.intRound, fechaHora);
       partido.estadio = event.strVenue || 'Por definir';
       partido.ciudad = event.strCity || 'Por definir';
       partido.fechaHora = fechaHora;
-      partido.estado = this.mapStatus(event.strStatus);
-      partido.golesLocal = this.parseScore(event.intHomeScore);
-      partido.golesVisitante = this.parseScore(event.intAwayScore);
+      partido.golesLocal = golesLocal;
+      partido.golesVisitante = golesVisitante;
+      partido.estado = this.mapStatus(
+        event.strStatus,
+        fechaHora,
+        golesLocal,
+        golesVisitante,
+      );
       const saved = await this.partidosRepository.save(partido);
+      savedCount += 1;
       if (saved.estado === PartidoEstado.FINALIZADO) {
         await this.pronosticosService.recalculateForMatch(saved.id);
+        resultsUpdated += 1;
+        finalized += 1;
       }
       if (current) updated += 1;
       else created += 1;
     }
-    this.logger.log(`Partidos importados: ${created}, actualizados: ${updated}`);
+    const totalInDatabase = await this.partidosRepository.count();
+    this.logger.log(
+      `Partidos recibidos desde TheSportsDB: ${events.length}. Partidos guardados: ${savedCount}. Partidos creados: ${created}. Partidos actualizados: ${updated}. Partidos finalizados: ${finalized}. Resultados actualizados: ${resultsUpdated}. Total en base de datos: ${totalInDatabase}.`,
+    );
     return {
       created,
       updated,
+      saved: savedCount,
+      finalized,
+      resultsUpdated,
       totalFromApi: events.length,
+      totalInDatabase,
     };
   }
 
   async syncTodayResults() {
     const apiKey = process.env.SPORTSDB_API_KEY || '123';
-    const url = process.env.SPORTSDB_EVENTS_DAY_URL;
-    if (!url) {
-      return {
-        updated: 0,
-        message: 'Configure SPORTSDB_EVENTS_DAY_URL para activar la sincronizacion',
-      };
-    }
-    const response = await fetch(url.replace('{API_KEY}', apiKey));
+    const leagueId = process.env.SPORTSDB_WORLD_CUP_LEAGUE_ID || '4429';
+    const season = process.env.SPORTSDB_WORLD_CUP_SEASON || '2026';
+    const today = new Date().toISOString().slice(0, 10);
+    const url =
+      process.env.SPORTSDB_EVENTS_DAY_URL ||
+      `https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsday.php?d=${today}&s=Soccer`;
+    const finalUrl = url
+      .replace('{API_KEY}', apiKey)
+      .replace('{LEAGUE_ID}', leagueId)
+      .replace('{SEASON}', season);
+    this.logger.log(`Consultando TheSportsDB: ${finalUrl}`);
+    const response = await fetch(finalUrl);
     if (!response.ok) {
-      throw new Error(`TheSportsDB respondio ${response.status}`);
+      const message = `Error de API TheSportsDB: ${response.status}`;
+      this.logger.error(message);
+      throw new Error(message);
     }
     const payload = (await response.json()) as { events?: SportsDbEvent[] };
     const events = payload.events ?? [];
+    this.logger.log(`Eventos recibidos desde TheSportsDB: ${events.length}`);
+    if (events.length === 0) {
+      this.logger.warn('TheSportsDB devolvio una lista vacia para resultados del dia');
+    }
     const todayMatches = await this.findTodayMatches();
     let updated = 0;
+    let finalized = 0;
     for (const match of todayMatches) {
       if (!match.sportsDbEventId) continue;
       const event = events.find((item) => item.idEvent === match.sportsDbEventId);
@@ -106,13 +138,22 @@ export class SincronizacionService implements OnModuleInit {
       if (Number.isNaN(golesLocal) || Number.isNaN(golesVisitante)) continue;
       match.golesLocal = golesLocal;
       match.golesVisitante = golesVisitante;
-      match.estado = this.mapStatus(event.strStatus);
+      match.estado = this.mapStatus(
+        event.strStatus,
+        match.fechaHora,
+        golesLocal,
+        golesVisitante,
+      );
       await this.partidosRepository.save(match);
       await this.pronosticosService.recalculateForMatch(match.id);
+      if (match.estado === PartidoEstado.FINALIZADO) finalized += 1;
       updated += 1;
     }
-    this.logger.log(`Resultados sincronizados: ${updated}`);
-    return { updated };
+    const totalInDatabase = await this.partidosRepository.count();
+    this.logger.log(
+      `Partidos recibidos desde TheSportsDB: ${events.length}. Partidos actualizados: ${updated}. Partidos finalizados: ${finalized}. Total en base de datos: ${totalInDatabase}.`,
+    );
+    return { updated, finalized, totalFromApi: events.length, totalInDatabase };
   }
 
   private async fetchSeasonEvents(): Promise<SportsDbEvent[]> {
@@ -127,12 +168,49 @@ export class SincronizacionService implements OnModuleInit {
       .replace('{API_KEY}', apiKey)
       .replace('{LEAGUE_ID}', leagueId)
       .replace('{SEASON}', season);
-    const response = await fetch(finalUrl);
-    if (!response.ok) {
-      throw new Error(`TheSportsDB respondio ${response.status}`);
+    this.logger.log(`Consultando TheSportsDB: ${finalUrl}`);
+    const events = await this.fetchEventsFromUrl(finalUrl);
+    const roundEvents = await this.fetchRoundEvents(apiKey, leagueId, season);
+    const byId = new Map<string, SportsDbEvent>();
+    for (const event of [...events, ...roundEvents]) {
+      if (event.idEvent) byId.set(event.idEvent, event);
     }
-    const payload = (await response.json()) as { events?: SportsDbEvent[] };
-    return payload.events ?? [];
+    const mergedEvents = [...byId.values()];
+    this.logger.log(
+      `Eventos recibidos desde TheSportsDB: temporada=${events.length}, rondas=${roundEvents.length}, unicos=${mergedEvents.length}`,
+    );
+    if (mergedEvents.length === 0) {
+      this.logger.warn('TheSportsDB devolvio una lista vacia para la temporada');
+    }
+    return mergedEvents;
+  }
+
+  private async fetchRoundEvents(
+    apiKey: string,
+    leagueId: string,
+    season: string,
+  ): Promise<SportsDbEvent[]> {
+    const rounds = ['1', '2', '3', '32', '16', '8', '4'];
+    const events: SportsDbEvent[] = [];
+    for (const round of rounds) {
+      const url = `https://www.thesportsdb.com/api/v1/json/${apiKey}/eventsround.php?id=${leagueId}&r=${round}&s=${season}`;
+      this.logger.log(`Consultando TheSportsDB: ${url}`);
+      const roundEvents = await this.fetchEventsFromUrl(url);
+      this.logger.log(`Eventos recibidos para ronda ${round}: ${roundEvents.length}`);
+      events.push(...roundEvents);
+    }
+    return events;
+  }
+
+  private async fetchEventsFromUrl(url: string): Promise<SportsDbEvent[]> {
+    const response = await fetch(url);
+    if (!response.ok) {
+      const message = `Error de API TheSportsDB: ${response.status}`;
+      this.logger.error(message);
+      throw new Error(message);
+    }
+    const payload = (await response.json()) as { events?: SportsDbEvent[] | null };
+    return (payload.events ?? []).filter(Boolean);
   }
 
   private resolveEventDate(event: SportsDbEvent): Date | null {
@@ -159,13 +237,39 @@ export class SincronizacionService implements OnModuleInit {
     });
   }
 
-  private mapStatus(status?: string): PartidoEstado {
-    if (status?.toLowerCase().includes('match finished')) {
+  private mapStatus(
+    status: string | undefined,
+    fechaHora: Date,
+    golesLocal: number | null,
+    golesVisitante: number | null,
+  ): PartidoEstado {
+    const normalized = status?.trim().toLowerCase() ?? '';
+    if (
+      ['ft', 'finished', 'final'].includes(normalized) ||
+      normalized.includes('match finished')
+    ) {
       return PartidoEstado.FINALIZADO;
     }
-    if (status?.toLowerCase().includes('in progress')) {
+    if (
+      ['live', 'in progress', '1h', '2h', 'ht', 'halftime'].includes(normalized) ||
+      normalized.includes('in progress')
+    ) {
       return PartidoEstado.EN_VIVO;
     }
+    if (
+      ['ns', 'not started', 'scheduled'].includes(normalized) ||
+      normalized.includes('not started') ||
+      normalized.includes('scheduled')
+    ) {
+      return PartidoEstado.PROGRAMADO;
+    }
+    const hasScore = golesLocal !== null && golesVisitante !== null;
+    if (hasScore && fechaHora.getTime() <= Date.now()) return PartidoEstado.FINALIZADO;
+    if (!hasScore && fechaHora.getTime() > Date.now()) return PartidoEstado.PROGRAMADO;
     return PartidoEstado.PROGRAMADO;
+  }
+
+  private mapPhase(round?: string, roundNumber?: string, fechaHora?: Date): string {
+    return normalizePartidoPhase(round || roundNumber, fechaHora);
   }
 }
