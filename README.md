@@ -1,106 +1,170 @@
-# API Quiniela Mundial 2026
+# Quiniela Mundial 2026 API
 
-Backend NestJS + TypeORM/MySQL para una quiniela del Mundial 2026 con usuarios, grupos, partidos, pronosticos, clasificacion y dashboard.
+Backend REST para una quiniela del Mundial 2026. Permite registrar usuarios, iniciar sesion con JWT, crear grupos, unirse por codigo, pronosticar partidos, consultar clasificaciones, ver dashboard y administrar el calendario/resultados con sincronizacion desde TheSportsDB.
 
-## Puesta en marcha
+## Tecnologias
 
-1. Copiar `.env.example` a `.env` y completar la conexion MySQL y `JWT_SECRET`.
-2. Instalar dependencias con `yarn install` o `npm install`.
-3. Iniciar con `yarn start:dev` o `npm run start:dev`.
+- NestJS
+- TypeORM
+- MySQL
+- JWT
+- class-validator
+- TheSportsDB
 
-El backend no crea administradores al arrancar. El administrador debe existir previamente en la tabla `user` con el valor `admin` en la columna `role`. Los usuarios registrados desde la API tienen el rol `usuario`.
+## Instalacion
+
+```bash
+npm install
+cp .env.example .env
+npm run start:dev
+```
+
+La API levanta por defecto en `http://localhost:3000`.
 
 ## MySQL con Docker
 
-El contenedor usado para el proyecto puede iniciarse con:
-
 ```bash
-docker run --name mysql-container -e MYSQL_ROOT_PASSWORD=asfafsdfs123! -v mysql-data:/var/lib/mysql -p 3306:3306 -d mysql:latest
+docker run --name quiniela-mysql -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -e MYSQL_DATABASE=quiniela_mundial -p 3306:3306 -d mysql:8
 ```
 
-La configuracion incluida en `.env.example` utiliza `localhost`, puerto `3306`, usuario `root` y esa contrasena. La base de datos `quiniela_mundial` debe existir dentro del contenedor antes de iniciar NestJS:
+Si prefieres usar contrasena:
 
 ```bash
-docker exec mysql-container mysql -uroot -pasfafsdfs123! -e "CREATE DATABASE IF NOT EXISTS quiniela_mundial;"
+docker run --name quiniela-mysql -e MYSQL_ROOT_PASSWORD=tu_clave -e MYSQL_DATABASE=quiniela_mundial -p 3306:3306 -d mysql:8
 ```
 
-## Endpoints
+Luego actualiza `DATABASE_PASSWORD` en `.env`.
 
-### Autenticacion y perfil
+## Variables de entorno
 
-- `POST /auth/register`: registra un usuario con nombre, correo y contrasena.
-- `POST /auth/login`: devuelve token JWT.
-- `POST /auth/logout`: cierre de sesion logico del cliente.
-- `GET /auth/me`: perfil del usuario autenticado.
-- `PATCH /auth/me`: modifica el nombre del usuario autenticado.
+```env
+PORT=3000
+DATABASE_HOST=localhost
+DATABASE_PORT=3306
+DATABASE_USERNAME=root
+DATABASE_PASSWORD=
+DATABASE_NAME=quiniela_mundial
+JWT_SECRET=coloca-una-clave-segura
+SPORTSDB_SYNC_ENABLED=true
+SPORTSDB_API_KEY=123
+SPORTSDB_SYNC_INTERVAL_MS=1200000
+SPORTSDB_WORLD_CUP_LEAGUE_ID=4429
+SPORTSDB_WORLD_CUP_SEASON=2026
+SPORTSDB_EVENTS_SEASON_URL=
+SPORTSDB_EVENTS_DAY_URL=
+```
 
-### Grupos
+El proyecto usa `synchronize: true` en TypeORM, por lo que crea/actualiza tablas automaticamente en desarrollo. Para produccion se recomienda migraciones.
 
-Requieren `Authorization: Bearer <token>`.
+## Autenticacion y roles
 
-- `POST /grupos`: crea un grupo e incorpora al creador.
-- `GET /grupos`: lista los grupos del usuario.
-- `GET /grupos/:id/invitacion`: devuelve el codigo de invitacion del grupo creado.
-- `POST /grupos/unirse`: une al usuario a un grupo mediante codigo.
-- `GET /grupos/:id/participantes`: lista participantes.
-- `GET /grupos/:id/clasificacion`: muestra ranking por puntos.
+Los endpoints privados requieren:
 
-### Partidos
+```http
+Authorization: Bearer <token>
+```
 
-- `GET /partidos`: calendario completo. Acepta `?fase=grupos&fecha=2026-06-11&estado=programado`.
-- `GET /partidos/:id`: detalle del partido, estadio y ciudad.
+Roles disponibles:
 
-Requieren token de administrador:
+- `visitante`: rol contemplado para visitantes/no autenticados.
+- `usuario`: rol por defecto al registrarse.
+- `admin`: puede administrar partidos y ejecutar sincronizaciones.
 
-- `POST /partidos`: registra un partido.
-- `PATCH /partidos/:id`: modifica informacion del partido. El resultado no puede editarse manualmente; se actualiza por sincronizacion externa.
+No se crea un administrador automaticamente. Para pruebas, registra un usuario y cambia su columna `role` a `admin` en MySQL.
 
-### Pronosticos
+## Endpoints principales
 
-Requieren token de usuario.
+Auth:
 
-- `POST /pronosticos`: registra un pronostico antes del inicio del partido.
-- `PATCH /pronosticos/:id`: modifica un pronostico mientras el partido no haya comenzado.
-- `GET /pronosticos/mios`: lista pronosticos del usuario y puntos obtenidos.
-- `GET /pronosticos/posicion/:grupoId`: devuelve la posicion del usuario dentro de un grupo.
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/logout`
 
-Ejemplo:
+Usuarios:
+
+- `GET /users/me`
+- `PATCH /users/me`
+
+Grupos:
+
+- `POST /grupos`
+- `GET /grupos`
+- `GET /grupos/:id`
+- `GET /grupos/:id/codigo`
+- `POST /grupos/unirse`
+- `GET /grupos/:id/participantes`
+- `GET /grupos/:id/clasificacion`
+
+Partidos:
+
+- `GET /partidos`
+- `GET /partidos?fase=&fecha=&estado=`
+- `GET /partidos/:id`
+
+Administrador:
+
+- `POST /partidos`
+- `PATCH /partidos/:id`
+- `PATCH /partidos/:id/resultado`
+- `POST /sincronizacion/partidos`
+- `POST /sincronizacion/resultados`
+
+Pronosticos:
+
+- `POST /pronosticos`
+- `PATCH /pronosticos/:id`
+- `GET /pronosticos/mis-pronosticos`
+- `GET /pronosticos/grupo/:grupoId`
+- `GET /pronosticos/grupo/:grupoId/posicion`
+
+Dashboard:
+
+- `GET /dashboard`
+
+## Pronosticos
+
+Ejemplo para crear un pronostico:
 
 ```json
 {
-  "partidoId": 1,
+  "grupoId": 1,
+  "partidoId": 10,
   "golesLocal": 2,
   "golesVisitante": 1
 }
 ```
 
-Reglas de puntos actuales:
+Reglas:
 
-- Marcador exacto: 3 puntos.
-- Ganador o empate acertado sin marcador exacto: 1 punto.
-- Resultado incorrecto: 0 puntos.
+- Solo se puede pronosticar antes del inicio del partido y si esta `programado`.
+- Un usuario no puede duplicar pronostico para el mismo partido dentro del mismo grupo.
+- Un usuario no puede modificar pronosticos de otros usuarios.
+- El usuario debe pertenecer al grupo.
 
-### Dashboard
+Puntuacion:
 
-- `GET /dashboard`: resumen del usuario con cantidad de grupos, puntaje acumulado, grupos y proximos partidos pendientes de pronostico.
+- 3 puntos por marcador exacto.
+- 1 punto por acertar ganador o empate.
+- 0 puntos si no acierta.
 
-### Sincronizacion de resultados
+Los puntos se guardan en cada pronostico y se recalculan cuando cambia el resultado oficial del partido.
 
-Requiere token de administrador.
+## TheSportsDB
 
-- `POST /sincronizacion/resultados`: ejecuta la sincronizacion manual de resultados del dia.
-- `POST /sincronizacion/partidos`: importa o actualiza el calendario desde TheSportsDB.
+El flujo correcto es:
 
-La sincronizacion automatica queda desactivada por defecto. Para activarla:
-
-```env
-SPORTSDB_SYNC_ENABLED=true
-SPORTSDB_SYNC_INTERVAL_MS=1200000
-SPORTSDB_API_KEY=123
-SPORTSDB_WORLD_CUP_LEAGUE_ID=4429
-SPORTSDB_WORLD_CUP_SEASON=2026
-SPORTSDB_EVENTS_SEASON_URL=
-SPORTSDB_EVENTS_DAY_URL=https://www.thesportsdb.com/api/v1/json/{API_KEY}/eventsday.php?d=2026-06-11&s=Soccer
+```text
+TheSportsDB -> SincronizacionService -> MySQL -> PartidosService -> Frontend
 ```
 
-Cada partido puede guardar `sportsDbEventId`; con ese identificador se cruza contra TheSportsDB y se recalculan los puntos de los pronosticos afectados.
+Con `SPORTSDB_SYNC_ENABLED=true`, al iniciar el backend se sincroniza el calendario de temporada y los resultados del dia. Luego se actualizan resultados cada `SPORTSDB_SYNC_INTERVAL_MS`; el valor esperado es `1200000`, equivalente a 20 minutos.
+
+La API gratuita usa:
+
+```env
+SPORTSDB_API_KEY=123
+```
+
+Puedes dejar vacias `SPORTSDB_EVENTS_SEASON_URL` y `SPORTSDB_EVENTS_DAY_URL` para usar la URL de temporada por defecto y configurar la diaria cuando sea necesario. Si se configuran, aceptan `{API_KEY}`, `{LEAGUE_ID}` y `{SEASON}` como placeholders.
+
+La sincronizacion registra logs de URL consultada, eventos recibidos, partidos creados, partidos actualizados, resultados actualizados, errores de API y respuestas vacias.

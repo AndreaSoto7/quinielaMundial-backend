@@ -4,6 +4,7 @@ import { Grupo } from '../../grupos/entities/grupo.entity';
 import { Pronostico } from '../../pronosticos/entities/pronostico.entity';
 
 export enum UserRole {
+  VISITANTE = 'visitante',
   USUARIO = 'usuario',
   ADMIN = 'admin',
 }

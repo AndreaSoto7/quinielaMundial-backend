@@ -5,11 +5,12 @@ import {
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
+import { Grupo } from '../../grupos/entities/grupo.entity';
 import { Partido } from '../../partidos/entities/partido.entity';
 import { User } from '../../users/entities/User';
 
 @Entity()
-@Unique(['usuario', 'partido'])
+@Unique(['usuario', 'grupo', 'partido'])
 export class Pronostico {
   @PrimaryGeneratedColumn()
   id: number;
@@ -24,6 +25,12 @@ export class Pronostico {
     onDelete: 'CASCADE',
   })
   partido: Partido;
+
+  @ManyToOne(() => Grupo, (grupo) => grupo.pronosticos, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
+  grupo: Grupo;
 
   @Column({ type: 'int' })
   golesLocal: number;

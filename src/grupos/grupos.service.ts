@@ -66,6 +66,16 @@ export class GruposService {
     });
   }
 
+  async findOne(usuarioId: number, grupoId: number): Promise<Grupo> {
+    await this.ensureMember(usuarioId, grupoId);
+    const grupo = await this.gruposRepository.findOne({
+      where: { id: grupoId },
+      relations: { creador: true },
+    });
+    if (!grupo) throw new NotFoundException('Grupo no encontrado');
+    return grupo;
+  }
+
   async getInvitationCode(usuarioId: number, grupoId: number) {
     const grupo = await this.gruposRepository.findOne({
       where: { id: grupoId },
@@ -100,9 +110,13 @@ export class GruposService {
       where: { estado: PartidoEstado.FINALIZADO },
     });
     const pronosticos = await this.pronosticosRepository.find({
-      where: miembros.map((miembro) => ({ usuario: { id: miembro.usuario.id } })),
+      where: miembros.map((miembro) => ({
+        usuario: { id: miembro.usuario.id },
+        grupo: { id: grupoId },
+      })),
       relations: { usuario: true, partido: true },
     });
+    await this.recalculateAndSave(pronosticos);
     const partidosFinalizadosIds = new Set(
       partidosFinalizados.map((partido) => partido.id),
     );
@@ -147,5 +161,44 @@ export class GruposService {
       code = Math.random().toString(36).slice(2, 8).toUpperCase();
     } while (await this.gruposRepository.findOneBy({ codigoInvitacion: code }));
     return code;
+  }
+
+  private async recalculateAndSave(pronosticos: Pronostico[]): Promise<void> {
+    const changed = pronosticos.filter((pronostico) => {
+      const puntos = this.calculatePoints(
+        pronostico.golesLocal,
+        pronostico.golesVisitante,
+        pronostico.partido,
+      );
+      if (pronostico.puntos === puntos) return false;
+      pronostico.puntos = puntos;
+      return true;
+    });
+    if (changed.length) {
+      await this.pronosticosRepository.save(changed);
+    }
+  }
+
+  private calculatePoints(
+    golesLocal: number,
+    golesVisitante: number,
+    partido: Partido,
+  ): number {
+    if (
+      partido.estado !== PartidoEstado.FINALIZADO ||
+      partido.golesLocal === null ||
+      partido.golesVisitante === null
+    ) {
+      return 0;
+    }
+    if (
+      golesLocal === partido.golesLocal &&
+      golesVisitante === partido.golesVisitante
+    ) {
+      return 3;
+    }
+    const predictedSign = Math.sign(golesLocal - golesVisitante);
+    const realSign = Math.sign(partido.golesLocal - partido.golesVisitante);
+    return predictedSign === realSign ? 1 : 0;
   }
 }

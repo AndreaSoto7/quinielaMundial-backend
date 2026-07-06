@@ -1,6 +1,15 @@
-import { IsNotEmpty } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateProfileDto {
-  @IsNotEmpty()
-  fullName: string;
+  @IsOptional()
+  @IsString()
+  fullName?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @MinLength(6, { message: 'La contrasena debe tener al menos 6 caracteres' })
+  password?: string;
 }

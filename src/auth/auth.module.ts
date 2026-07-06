@@ -6,9 +6,10 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthGuard } from './auth.guard';
 import { RolesGuard } from './roles.guard';
+import { UsersController } from '../users/users.controller';
 
 @Module({
-  controllers: [AuthController],
+  controllers: [AuthController, UsersController],
   providers: [AuthService, AuthGuard, RolesGuard],
   imports: [
     ConfigModule.forRoot(),

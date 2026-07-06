@@ -43,8 +43,32 @@ export class PronosticosController {
     return this.service.findMine(user.id);
   }
 
-  @Get('posicion/:grupoId')
+  @Get('mis-pronosticos')
+  findMyPredictions(@Req() request: Request) {
+    const user = request['user'] as UserInfoDto;
+    return this.service.findMine(user.id);
+  }
+
+  @Get('grupo/:grupoId')
+  findByGroup(
+    @Req() request: Request,
+    @Param('grupoId', ParseIntPipe) grupoId: number,
+  ) {
+    const user = request['user'] as UserInfoDto;
+    return this.service.findByGroup(user.id, grupoId);
+  }
+
+  @Get('grupo/:grupoId/posicion')
   position(
+    @Req() request: Request,
+    @Param('grupoId', ParseIntPipe) grupoId: number,
+  ) {
+    const user = request['user'] as UserInfoDto;
+    return this.service.getUserPosition(user.id, grupoId);
+  }
+
+  @Get('posicion/:grupoId')
+  legacyPosition(
     @Req() request: Request,
     @Param('grupoId', ParseIntPipe) grupoId: number,
   ) {

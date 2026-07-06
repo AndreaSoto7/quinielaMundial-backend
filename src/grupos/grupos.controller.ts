@@ -38,6 +38,18 @@ export class GruposController {
     return this.service.findMine(user.id);
   }
 
+  @Get(':id')
+  findOne(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
+    const user = request['user'] as UserInfoDto;
+    return this.service.findOne(user.id, id);
+  }
+
+  @Get(':id/codigo')
+  code(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
+    const user = request['user'] as UserInfoDto;
+    return this.service.getInvitationCode(user.id, id);
+  }
+
   @Get(':id/invitacion')
   invitation(@Req() request: Request, @Param('id', ParseIntPipe) id: number) {
     const user = request['user'] as UserInfoDto;

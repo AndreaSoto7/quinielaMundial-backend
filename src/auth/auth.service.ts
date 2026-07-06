@@ -69,9 +69,9 @@ export class AuthService {
 
   async updateUserProfile(
     userId: number,
-    fullName: string,
+    dto: { fullName?: string; email?: string; password?: string },
   ): Promise<UserInfoDto> {
-    const user = await this.usersService.updateProfile(userId, fullName);
+    const user = await this.usersService.updateProfile(userId, dto);
     return {
       id: user.id,
       email: user.email,

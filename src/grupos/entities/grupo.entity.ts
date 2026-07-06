@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/User';
+import { Pronostico } from '../../pronosticos/entities/pronostico.entity';
 import { GrupoMiembro } from './grupo-miembro.entity';
 
 @Entity()
@@ -27,6 +28,9 @@ export class Grupo {
 
   @OneToMany(() => GrupoMiembro, (miembro) => miembro.grupo)
   miembros: GrupoMiembro[];
+
+  @OneToMany(() => Pronostico, (pronostico) => pronostico.grupo)
+  pronosticos: Pronostico[];
 
   @CreateDateColumn()
   creadoEn: Date;

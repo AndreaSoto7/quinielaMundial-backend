@@ -40,6 +40,6 @@ export class AuthController {
   @Patch('me')
   updateProfile(@Req() request: Request, @Body() dto: UpdateProfileDto) {
     const loggedInUser = request['user'] as UserInfoDto;
-    return this.authService.updateUserProfile(loggedInUser.id, dto.fullName);
+    return this.authService.updateUserProfile(loggedInUser.id, dto);
   }
 }
